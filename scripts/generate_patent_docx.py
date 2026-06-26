@@ -56,6 +56,15 @@ import re
 import sys
 from pathlib import Path
 
+# Ensure UTF-8 output on Windows to avoid UnicodeEncodeError with Chinese characters
+if sys.platform == 'win32':
+    try:
+        import io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 try:
     from docx import Document
     from docx.shared import Cm, Pt, RGBColor
@@ -93,44 +102,119 @@ LINE_SPACING_TITLE = Pt(24)
 
 FIRST_LINE_INDENT = Cm(0.74)
 
-# Office Math 命名空间
-MATH_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/math'
-
-
 # ==================== LaTeX 公式处理 ====================
+
+def _find_matching_brace(text: str, start: int) -> int:
+    """
+    Find the matching closing brace for the opening brace at position `start`.
+    Returns the index of the matching '}' or -1 if not found.
+    """
+    if start >= len(text) or text[start] != '{':
+        return -1
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return i
+    return -1
+
 
 def latex_to_office_linear(latex):
     """
     将 LaTeX 公式转换为 Office Math linear format。
     Office Math linear format 是 Word 原生公式编辑器支持的类 LaTeX 语法。
+
+    使用基于 brace-matching 的解析器处理嵌套花括号，支持嵌套 \\frac、
+    含花括号的下标/上标等复杂公式。
     """
     text = latex.strip()
 
-    # 转换 \frac{a}{b} → (a)/(b)
-    # 需要递归处理嵌套分数，使用循环而非递归
-    prev = None
-    while prev != text:
-        prev = text
-        text = re.sub(
-            r'\\frac\{([^{}]*)\}\{([^{}]*)\}',
-            lambda m: '(%s)/(%s)' % (m.group(1), m.group(2)),
-            text
-        )
+    # ---- \\frac{num}{den} → (num)/(den) ----
+    # 从外向内逐层转换嵌套分数，使用 brace-matching 而非简单正则
+    # 最多迭代 10 层（远超实际需要）
+    for _ in range(10):
+        result = []
+        i = 0
+        converted = False
+        while i < len(text):
+            if text[i:i+5] == '\\frac' and i+5 < len(text) and text[i+5] == '{':
+                num_start = i + 6  # content right after '{'
+                num_end = _find_matching_brace(text, i + 5)
+                if num_end == -1 or num_end + 1 >= len(text) or text[num_end + 1] != '{':
+                    result.append(text[i])
+                    i += 1
+                    continue
+                den_start = num_end + 2  # content right after second '{'
+                den_end = _find_matching_brace(text, num_end + 1)
+                if den_end == -1:
+                    result.append(text[i])
+                    i += 1
+                    continue
+                num_content = text[num_start:num_end]
+                den_content = text[den_start:den_end]
+                result.append(f'({num_content})/({den_content})')
+                i = den_end + 1
+                converted = True
+            else:
+                result.append(text[i])
+                i += 1
+        text = ''.join(result)
+        if not converted:
+            break  # No more \\frac found, done
 
-    # 转换 \sqrt{a} → \sqrt(a)
-    text = re.sub(r'\\sqrt\{([^{}]*)\}', r'\\sqrt(\1)', text)
+    # ---- \\sqrt{a} → \\sqrt(a) ----
+    result = []
+    i = 0
+    while i < len(text):
+        if text[i:i+5] == '\\sqrt' and i+5 < len(text) and text[i+5] == '{':
+            end = _find_matching_brace(text, i + 5)
+            if end == -1:
+                result.append(text[i])
+                i += 1
+            else:
+                inner = text[i+6:end]
+                result.append(f'\\sqrt({inner})')
+                i = end + 1
+        else:
+            result.append(text[i])
+            i += 1
+    text = ''.join(result)
 
-    # 转换 \sqrt[n]{a} → \sqrt(n&a)
-    text = re.sub(r'\\sqrt\[(\d+)\]\{([^{}]*)\}', r'\\sqrt(\1&\2)', text)
+    # ---- \\sqrt[n]{a} → \\sqrt(n&a) ----
+    result = []
+    i = 0
+    while i < len(text):
+        if text[i:i+5] == '\\sqrt' and i+5 < len(text) and text[i+5] == '[':
+            bracket_end = text.find(']', i + 6)
+            if bracket_end == -1 or bracket_end + 1 >= len(text) or text[bracket_end + 1] != '{':
+                result.append(text[i])
+                i += 1
+                continue
+            n = text[i+6:bracket_end]
+            brace_end = _find_matching_brace(text, bracket_end + 1)
+            if brace_end == -1:
+                result.append(text[i])
+                i += 1
+                continue
+            inner = text[bracket_end+2:brace_end]
+            result.append(f'\\sqrt({n}&{inner})')
+            i = brace_end + 1
+        else:
+            result.append(text[i])
+            i += 1
+    text = ''.join(result)
 
-    # 删除 \left 和 \right（Office 自动调整括号大小）
+    # ---- 删除 \\left 和 \\right（Office 自动调整括号大小） ----
     text = text.replace(r'\left', '').replace(r'\right', '')
 
-    # 转换省略号
+    # ---- 转换省略号 ----
     text = text.replace(r'\dots', '...').replace(r'\ldots', '...')
     text = text.replace(r'\cdots', '⋯')
 
-    # 转换角度
+    # ---- 转换角度 ----
     text = text.replace(r'^∘', '^°')
 
     return text
@@ -191,11 +275,17 @@ def add_text_with_latex_to_para(para, text):
 
 def add_body_paragraphs(doc, text, first_line_indent=True):
     """
-    添加正文段落，支持 $...$ LaTeX 公式，支持 \n 拆分为多个段落（硬回车）。
-    每个 \n 创建一个独立的段落，绝不使用软回车（Shift+Enter）。
+    添加正文段落，支持 $...$ LaTeX 公式，支持 \\n 拆分为多个段落（硬回车）。
+    每个 \\n 创建一个独立的段落，绝不使用软回车（Shift+Enter）。
+
+    自动检测 S1：/S2：/S3： 等步骤标题前缀，将其加粗（符合 writing-specs.md
+    「每个 S 独占段落」+「S 标题在 Word 中加粗显示」的要求）。
     """
     if not text:
         return
+
+    # S 步骤前缀正则：S1：/S2：/S1:/S2: 等（全角半角冒号均支持）
+    S_STEP_RE = re.compile(r'^(S\d+[：:])\s*')
 
     lines = text.split('\n')
     for line in lines:
@@ -203,7 +293,21 @@ def add_body_paragraphs(doc, text, first_line_indent=True):
         if not line:
             continue
         para = doc.add_paragraph()
-        add_text_with_latex_to_para(para, line)
+
+        # 检测 S 步骤标题并加粗
+        s_match = S_STEP_RE.match(line)
+        if s_match:
+            s_prefix = s_match.group(1)
+            rest = line[s_match.end():]
+            # 加粗 S 标题
+            run_bold = para.add_run(s_prefix)
+            set_chinese_font(run_bold, bold=True)
+            # 剩余正文（含公式）
+            if rest:
+                add_text_with_latex_to_para(para, rest)
+        else:
+            add_text_with_latex_to_para(para, line)
+
         if first_line_indent:
             para.paragraph_format.first_line_indent = FIRST_LINE_INDENT
         para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
@@ -367,124 +471,143 @@ def add_heading2(doc, text):
     return para
 
 
-def add_body_text_plain(doc, text, first_line_indent=True):
-    """添加纯文本段落（无公式），支持 \n 拆分为多个段落（硬回车）"""
-    if not text:
-        return
-    lines = text.split('\n')
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        para = doc.add_paragraph()
-        run = para.add_run(line)
-        set_chinese_font(run)
-        if first_line_indent:
-            para.paragraph_format.first_line_indent = FIRST_LINE_INDENT
-        para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-        para.paragraph_format.line_spacing = LINE_SPACING_BODY
-        para.paragraph_format.space_after = Pt(0)
-        para.paragraph_format.space_before = Pt(0)
-
-
 # ==================== 主生成函数 ====================
 
-def generate_patent_docx(data, output_path):
-    """生成专利 Word 文档"""
+def generate_patent_docx(data, output_path, section=None):
+    """生成专利 Word 文档
+
+    section 参数：
+        None      — 生成完整文档（权利要求书 + 说明书 + 摘要）
+        "claims"  — 仅生成权利要求书
+        "specification" — 仅生成说明书（五章节）
+        "abstract" — 仅生成说明书摘要
+    """
     doc = Document()
 
     # 设置页面和默认样式
-    section = doc.sections[0]
-    setup_section(section)
+    section_obj = doc.sections[0]
+    setup_section(section_obj)
     setup_normal_style(doc)
-    add_page_number(section)
+    add_page_number(section_obj)
 
     # 获取数据
     patent_type = data.get("patent_type", "发明专利")
     invention_name = data.get("invention_name", "未命名发明")
     sections = data.get("sections", {})
 
+    gen_all = section is None
+
     # ============== 权利要求书 ==============
-    add_document_title(doc, "权 利 要 求 书")
+    if gen_all or section == "claims":
+        add_document_title(doc, "权 利 要 求 书")
 
-    claims = sections.get("claims", [])
-    for i, claim in enumerate(claims, 1):
-        add_claim_with_latex(doc, i, claim)
+        claims = sections.get("claims", [])
+        # Guard against explicitly-null claims (e.g., JSON "claims": null)
+        if not isinstance(claims, list):
+            claims = []
+        for i, claim in enumerate(claims, 1):
+            add_claim_with_latex(doc, i, claim)
 
-    # 分页
-    doc.add_page_break()
-
-    # ============== 说明书 ==============
-    add_document_title(doc, "说 明 书")
-    add_invention_name(doc, invention_name)
-
-    spec = sections.get("specification", {})
-
-    # 技术领域
-    add_heading1(doc, "技术领域")
-    tech_field = spec.get("tech_field", "")
-    if tech_field:
-        add_body_paragraphs(doc, tech_field)
-
-    # 背景技术
-    add_heading1(doc, "背景技术")
-    background = spec.get("background", "")
-    if background:
-        add_body_paragraphs(doc, background)
-
-    # 发明内容
-    add_heading1(doc, "发明内容")
-    invention_content = spec.get("invention_content", {})
-
-    problem = invention_content.get("problem", "")
-    if problem:
-        add_heading2(doc, "技术问题")
-        add_body_paragraphs(doc, problem)
-
-    solution = invention_content.get("solution", "")
-    if solution:
-        add_heading2(doc, "技术方案")
-        add_body_paragraphs(doc, solution)
-
-    effects = invention_content.get("effects", "")
-    if effects:
-        add_heading2(doc, "有益效果")
-        add_body_paragraphs(doc, effects)
-
-    # 附图说明
-    add_heading1(doc, "附图说明")
-    figure_desc = spec.get("figure_desc", "")
-    if figure_desc:
-        add_body_paragraphs(doc, figure_desc)
-
-    # 具体实施方式
-    add_heading1(doc, "具体实施方式")
-    embodiment = spec.get("embodiment", "")
-    if embodiment:
-        add_body_paragraphs(doc, embodiment)
+        if section == "claims":
+            doc.save(output_path)
+            print(f"权利要求书已生成: {output_path}")
+            print(f"  - 发明名称: {invention_name}")
+            print(f"  - 权利要求数: {len(claims)}")
+            return
 
     # 分页
-    doc.add_page_break()
+    if gen_all or section == "specification":
+        if gen_all:
+            doc.add_page_break()
+
+        add_document_title(doc, "说 明 书")
+        add_invention_name(doc, invention_name)
+
+        spec = sections.get("specification", {})
+
+        # 技术领域
+        add_heading1(doc, "技术领域")
+        tech_field = spec.get("tech_field", "")
+        if tech_field:
+            add_body_paragraphs(doc, tech_field)
+
+        # 背景技术
+        add_heading1(doc, "背景技术")
+        background = spec.get("background", "")
+        if background:
+            add_body_paragraphs(doc, background)
+
+        # 发明内容
+        add_heading1(doc, "发明内容")
+        invention_content = spec.get("invention_content", {})
+        # Guard against explicitly-null invention_content in JSON
+        if not isinstance(invention_content, dict):
+            invention_content = {}
+
+
+        problem = invention_content.get("problem", "")
+        if problem:
+            add_heading2(doc, "技术问题")
+            add_body_paragraphs(doc, problem)
+
+        solution = invention_content.get("solution", "")
+        if solution:
+            add_heading2(doc, "技术方案")
+            add_body_paragraphs(doc, solution)
+
+        effects = invention_content.get("effects", "")
+        if effects:
+            add_heading2(doc, "有益效果")
+            add_body_paragraphs(doc, effects)
+
+        # 附图说明
+        add_heading1(doc, "附图说明")
+        figure_desc = spec.get("figure_desc", "")
+        if figure_desc:
+            add_body_paragraphs(doc, figure_desc)
+
+        # 具体实施方式
+        add_heading1(doc, "具体实施方式")
+        embodiment = spec.get("embodiment", "")
+        if embodiment:
+            add_body_paragraphs(doc, embodiment)
+
+        if section == "specification":
+            doc.save(output_path)
+            print(f"说明书已生成: {output_path}")
+            print(f"  - 发明名称: {invention_name}")
+            return
+
+    # 分页
+    if gen_all:
+        doc.add_page_break()
 
     # ============== 说明书摘要 ==============
-    add_document_title(doc, "说明书摘要")
+    if gen_all or section == "abstract":
+        add_document_title(doc, "说明书摘要")
 
-    abstract_data = sections.get("abstract", {})
-    abstract_text = abstract_data.get("text", "")
-    if abstract_text:
-        add_body_paragraphs(doc, abstract_text)
+        abstract_data = sections.get("abstract", {})
+        abstract_text = abstract_data.get("text", "")
+        if abstract_text:
+            add_body_paragraphs(doc, abstract_text)
 
-    abstract_figure = abstract_data.get("figure", "")
-    if abstract_figure:
-        para = doc.add_paragraph()
-        run = para.add_run(f"摘要附图：{abstract_figure}")
-        set_chinese_font(run)
-        para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
-        para.paragraph_format.line_spacing = LINE_SPACING_BODY
-        para.paragraph_format.space_before = Pt(6)
+        abstract_figure = abstract_data.get("figure", "")
+        if abstract_figure:
+            para = doc.add_paragraph()
+            run = para.add_run(f"摘要附图：{abstract_figure}")
+            set_chinese_font(run)
+            para.paragraph_format.line_spacing_rule = WD_LINE_SPACING.EXACTLY
+            para.paragraph_format.line_spacing = LINE_SPACING_BODY
+            para.paragraph_format.space_before = Pt(6)
 
-    # 保存
+        if section == "abstract":
+            doc.save(output_path)
+            print(f"说明书摘要已生成: {output_path}")
+            return
+
+    # 保存完整文档
     doc.save(output_path)
+    claims = sections.get("claims", [])
     print(f"专利文档已生成: {output_path}")
     print(f"  - 发明名称: {invention_name}")
     print(f"  - 专利类型: {patent_type}")
@@ -494,14 +617,21 @@ def generate_patent_docx(data, output_path):
 
 def main():
     """命令行入口"""
-    if len(sys.argv) < 3:
-        print("用法: python generate_patent_docx.py <input.json> <output.docx>")
-        print("")
-        print("input.json 应包含专利内容，格式参见脚本顶部注释")
-        sys.exit(1)
+    import argparse
 
-    input_path = Path(sys.argv[1])
-    output_path = Path(sys.argv[2])
+    parser = argparse.ArgumentParser(description="中国专利申请文件 Word 生成器")
+    parser.add_argument("input", help="输入 JSON 文件路径")
+    parser.add_argument("output", help="输出 .docx 文件路径")
+    parser.add_argument(
+        "--section",
+        choices=["claims", "specification", "abstract"],
+        default=None,
+        help="仅生成指定章节（默认：生成完整文档）",
+    )
+
+    args = parser.parse_args()
+    input_path = Path(args.input)
+    output_path = Path(args.output)
 
     if not input_path.exists():
         print(f"错误: 输入文件不存在: {input_path}")
@@ -510,7 +640,7 @@ def main():
     with open(input_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    generate_patent_docx(data, output_path)
+    generate_patent_docx(data, output_path, section=args.section)
 
 
 if __name__ == '__main__':

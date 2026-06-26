@@ -21,3 +21,10 @@ Thumbs.db
 
 # Generated outputs
 *.docx
+
+# User drafts
+drafts/
+
+# Reviewer outputs (generated at runtime)
+reviews/*
+!reviews/.gitkeep

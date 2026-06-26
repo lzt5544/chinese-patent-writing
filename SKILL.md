@@ -1,6 +1,6 @@
 ---
 name: chinese-patent-writing
-description: Generate a Chinese patent application as a formatted Word (.docx) file that complies with CNIPA standards. Triggers when the user asks to write, draft, or create a Chinese patent (发明专利 or 实用新型专利), or mentions 专利撰写, 专利申请, 专利说明书, 权利要求书, 技术交底书, or patent application. Also triggers for requests to write or modify any single section of a patent. The output is ALWAYS a Word (.docx) file — never plain text or Markdown. Requires python-docx.
+description: Use when the user asks to write, draft, or create a Chinese patent (发明专利 or 实用新型专利), or mentions 专利撰写, 专利申请, 专利说明书, 权利要求书, 技术交底书, or patent application. Also triggers for requests to write or modify any single section of a patent. Requires python-docx.
 ---
 
 # 中文专利撰写 (Chinese Patent Writing)
@@ -16,7 +16,15 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 **底层逻辑链（贯穿全文）：** 背景技术缺陷（技术问题）→ 技术方案（区别特征）→ 有益效果（技术进步）。三者必须一一对应、环环相扣。
 
 **工作流程（每次被触发后按此执行）：**
-1. 理解用户技术方案 → 2. 按流程撰写专利内容 → 3. 将内容组织为 JSON → 4. **自我审查与迭代优化**（见下方完整章节）→ 5. **调用 `scripts/generate_patent_docx.py` 生成 `.docx`** → 6. 将文件交付给用户
+
+**首次触发时**，先检查是否有未完成的草稿：
+
+```bash
+python scripts/draft_manager.py list
+```
+
+- 若有未完成草稿（stage 1-6），**主动询问**用户是否继续。
+- 若无草稿，根据用户意图选择模式：[完整撰写](#完整撰写流程) / [分部写作](#分部写作流程-逐步确认模式) / [单独撰写](#单独撰写专利某一部分)。所有模式的最终执行流程统一见 [完整输出流程](#完整输出流程)。
 
 > **永远不要输出纯文本或 Markdown 给用户。** 最终交付物必须是通过脚本生成的 `.docx` Word 文件。
 
@@ -39,7 +47,9 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 
 **文档结构**：一个 `.docx` 文件包含权利要求书、说明书、说明书摘要三部分，用分页符分隔。权利要求书顶格书写无缩进；说明书正文首行缩进两字符。**说明书不得含有段落编号（如 `[0001]`）**，权利要求用阿拉伯数字编号 `1. 2. 3.`。
 
-**生成流程**：撰写专利内容 → 按 JSON 结构组织 → 调用 `scripts/generate_patent_docx.py` 生成 `.docx` → 交付用户。
+**生成流程**：撰写专利内容 → 按 JSON 结构组织 → 自动验证 → **手动派发 4 个子代理进行语义审查**（详见[步骤3b](#步骤3b--多子代理语义审查手动)）→ 编排脚本 `scripts/orchestrate.py` 聚合审查结果并评分 → 生成 `.docx` → 交付用户。单章输出可直接用 `scripts/generate_patent_docx.py --section`。详见 [完整输出流程](#完整输出流程)。
+
+> **注意**：编排脚本 `orchestrate.py` **不会自动派发子代理**——它仅负责聚合 `reviews/` 目录中已有的子代理输出并评分。子代理需由主代理手动派发后再运行编排脚本。
 
 > 依赖：`pip install python-docx`
 
@@ -75,7 +85,9 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 
 | 用户请求 | 采用模式 |
 |---------|---------|
-| "帮我写一份专利" / 提供技术交底书 | **完整撰写** → 按6步流程（含自我审查） |
+| "帮我写一份专利" / 提供技术交底书 / 明确要一次生成 | **完整撰写（一步成稿）** → 一次性产出全文，含审查 |
+| "帮我分步写一份专利" / "一步一步来" / "按阶段写" / 希望逐步确认 | **分部写作（逐步确认）** → 5-6 阶段逐步确认，每阶段可保存草稿 |
+| "继续之前的草稿" / "恢复草稿" / 提及有未完成草稿 | **恢复草稿** → 从上次中断的阶段继续 |
 | "帮我写权利要求书" / "写一下背景技术" 等 | **单独撰写某一部分** → 见下方指南 |
 | "帮我检查一下权利要求" / 审查已有专利 | **审查/优化** → 运行 `scripts/validate_patent_json.py` + 人工审查 |
 
@@ -85,10 +97,9 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 
 > 撰写前先完成[专利类型判断](#专利类型判断)。涉及方法/算法/材料配方 → 发明；仅产品结构 → 可考虑实用新型。
 
-```
-1. 理解技术方案 → 2. 构建权利要求 → 3. 确定名称
-→ 4. 撰写说明书 → 5. 撰写摘要 → 6. 自我审查与迭代优化
-```
+按五步推进撰写内容：理解技术方案 → 构建权利要求 → 确定名称 → 撰写说明书 → 撰写摘要。每步的详细规范见下方子章节（1-5）。
+
+撰写完成后，审查与生成 Word 的统一流程见 [完整输出流程](#完整输出流程)。
 
 ### 1. 理解技术方案
 
@@ -117,13 +128,7 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 **独立权利要求**（必须）：前序部分 + 特征部分（"其特征在于..."），包含全部必要技术特征
 **从属权利要求**（建议2-5项）：引用在前权利要求 + 附加技术特征
 
-**术语概括技巧（权利要求上位化）：**
-
-| 概括类型 | 含义 | 示例 |
-|---------|------|------|
-| **选择型概括** | 上位词代替多个下位词，保护任一个下位概念 | 卡接、螺纹连接、锁扣连接 → **可拆卸连接** |
-| **合并型概括** | 母集代替所有子集，保护由子集组成的整体 | 公卡扣、母卡扣 → **卡扣组件** |
-| **并列概括** | 用"或"/"和/或"将多个特征写入同一权利要求 | "还包括D组分**或**E组分" / "还包括D组分**和/或**E组分" |
+**术语概括技巧（权利要求上位化）：** 参见 `references/writing-specs.md` 中「权利要求书详细撰写规范」的概括技巧部分。三种核心类型：选择型概括（上位词替代下位词）、合并型概括（母集替代子集）、并列概括（"或"/"和/或"）。
 
 **主题名称选择策略：**
 - 确定主题名称时，充分考虑可能的侵权者身份（制造商、销售商、使用者），尽量将所有环节的侵权主体纳入保护范围
@@ -152,7 +157,7 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 
 **⚠️ 技术方案 vs 实施例的区别：**
 
-| | 技术方案（发明内容中） | 实施例（具体实施方式中） |
+| 对比维度 | 技术方案（发明内容中） | 实施例（具体实施方式中） |
 |------|------|------|
 | 作用 | 对权利要求的技术方案展开说明 | **证明**技术方案确实能解决所述技术问题并产生预期效果；让技术人员能照着做出来 |
 | 格式 | S1/S2/S3 独占段落 | **S1：** **S2：** 加粗标题，独占段落 |
@@ -167,31 +172,20 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 1. **技术领域**（1-2句）
 2. **背景技术**（1-3段，200-400字）：简述最接近现有技术→客观指出缺陷。**不写行业/市场/发展史**
 
-   **撰写深度策略：** 根据发明难易程度和新创性调整背景技术的详细程度：
-   - **技术方案复杂、新创性高** → 详细写明现有技术的缺陷，帮助审查员理解发明的技术贡献
-   - **技术方案简单、新创性低** → 将现有技术的问题适当上位概括，避免给出技术启示
-   - **背景技术中的缺陷 = 本申请要解决的技术问题**，是整篇专利的逻辑起点
+   **撰写深度策略：** 复杂/高创新发明→详细写明缺陷；简单/低创新发明→上位概括避免技术启示。**背景技术中的缺陷 = 本申请要解决的技术问题**。写法对比示例见 `references/writing-specs.md`「背景技术写法对比」及 `references/examples.md`。
 3. **发明内容**：
    - **技术问题（1-2段）**：**不写"本发明所要解决的技术问题是提供一种…"**，这不是技术问题而是技术方案的开头。正确写法是从背景技术的缺陷自然引出，聚焦核心技术矛盾。
-     - ✅ 好的写法：`现有台灯无法根据环境光照变化自动联动调节亮度与色温，导致暗环境下高色温光线易引发视疲劳，且用户手动调节操作繁琐。`
-     - ❌ 差的写法：`本发明所要解决的技术问题是提供一种自适应调光护眼台灯，以解决现有台灯无法自动调节的技术问题。`（空泛、套路化、与技术方案混淆）
-     - **原则：背景技术里写了什么缺陷，技术问题就直接点明要解决什么，一一对应，绝不绕弯子。**
+     - **原则：背景技术里写了什么缺陷，技术问题就直接点明要解决什么，一一对应，绝不绕弯子。**（正反示例见 `references/examples.md`）
    - **技术方案（≥S 步骤数个独立段落）**：每个 S 独占一段，段落间空行分隔
    - **有益效果（1-3段）**：**必须推导，不能断言。** 每个效果都要有"因为采用了技术特征X，所以产生了效果Y"的推导逻辑链，且与背景技术的缺陷一一对应。
-     - ✅ 好的写法：`护眼曲线算法实现了亮度与色温的联动调节，环境光变暗时自动提高亮度并切换暖色调，减少了人眼瞳孔的频繁调节，降低了视疲劳程度。`
-     - ❌ 差的写法：`有效减少视疲劳，使用便捷。`（纯断言、无推导、混入用户体验）
      - **禁止混入商业/用户体验效果**：不说"市场前景广阔""使用便捷""成本低""用户体验好"，只写技术层面的客观效果
-     - **推导链模板**：`本发明通过[区别技术特征]，实现了[技术效果]，因为[物理/化学/电学原理]`。效果放在前面，原理跟在后面，避免长句导致读者找不到落点。
-     - **量化优先**：能用数据不用形容词。不说"显著提高"，说"效率提高30%""寿命延长至1500小时"
-     - **不用"第一/第二/第三"罗列**：说明书正文禁用序号词。多个效果用**分段**或**"进一步地"**衔接。参见 `references/effects-patterns.md` 中的五种写法类型。
+     - **推导链模板**：`通过[特征]实现[效果]，因为[原理]` — 效果在前，原理在后。
+     - **量化优先**：用数据（"效率提高30%"）不用形容词（"显著提高"）。
+     - **不用序号词罗列**：多个效果用分段或"进一步地"衔接。五种写法类型见 `references/effects-patterns.md`。
 4. **附图说明**（每图一句）
 5. **具体实施方式**：每个实施例独立成块，实施例内用 **S1：**、**S2：**……分步骤展开，每步独占段落。方法类每步含完整数学公式和参数定义。产品类给出具体结构参数。覆盖全部权利要求特征。**实施例的核心功能不仅是"教别人怎么做"，更是证明该技术方案确实能解决所述技术问题并产生预期效果。** 因此，实施例不仅要给出操作步骤和参数，还应包含实施结果或效果验证（如实验数据、性能测试、对比表格等），以证明技术方案的有效性。
 
-   **实施例的两种常用写法：**
-
-   **写法一（单图多方案对比）：** 在同一幅图中展示发明人提供的方案 A' 和代理师挖掘的替代方案 A''。先写 A' 的具体结构和原理，再写 A'' 的具体结构和原理，最后对比两者的优劣。
-
-   **写法二（多图各一方案）：** 实施例一用图X展示方案 A'（含完整部件功能描述和协同原理），实施例二用图Y展示方案 A''（同样展开）。当权利要求保护范围较宽时，至少给出两个不同实施例；涉及数值范围时，还应给出中间值实施例。
+   **实施例的两种常用写法：** 写法一（单图多方案对比）和写法二（多图各一方案）。详见 `references/writing-specs.md`「技术方案与实施例的分步阐述规则」及 `references/examples.md`。
 
 ### 5. 撰写摘要
 
@@ -199,19 +193,92 @@ description: Generate a Chinese patent application as a formatted Word (.docx) f
 
 ### 需要时读 references
 
-以下 reference 文件**按需加载**，不需要全部读取。根据当前任务判断需要哪个：
+以下 reference 文件分为两级：
+
+**一级 — 必读（动笔前）：**
 
 | 场景 | 必须读取的文件 |
 |------|---------------|
-| 用户要求检索现有技术，或背景技术需要引用专利文献 | `references/search-guide.md` |
-| 不确定撰写格式细节（附图规范、摘要要求、数值范围写法、权利要求形式要求） | `references/writing-specs.md` |
+| **撰写任何专利内容前** | **`references/writing-specs.md`** — 撰写规范的核心文档，包含分步阐述规则、数学语言要求、背景技术简练规则、数值范围规范、权利要求书详细撰写规范等。**动笔前必须读，审查时对照检查。** |
 | 涉及**软件/算法/AI/计算机程序**、**化学/材料**、**生物**领域的发明 | `references/special-domains.md`（这些领域有特殊撰写要求，必读） |
+
+**二级 — 按需加载（根据当前任务判断）：**
+
+| 场景 | 文件 |
+|------|------|
+| 用户要求检索现有技术，或背景技术需要引用专利文献 | `references/search-guide.md` |
 | 撰写完成后自我审查（自动验证） | `references/checklist.md` + 运行 `scripts/validate_patent_json.py` |
-| 自动验证通过后的语义审查 | 见本文件「自我审查与迭代优化」→「人工审查」清单 |
+| 自动验证通过后的语义审查 | 本文件「自我审查与迭代优化」+ 4 个子代理 prompt（已内嵌 writing-specs.md 引用） |
 | 需要参照完整示例理解输出格式 | `references/examples.md` |
 | 不确定有益效果怎么写、需要写法模板 | `references/effects-patterns.md`（包含数据驱动型/深层递进型/攻克瓶颈型/多从权逐层展开型/意料不到型五种写法） |
 
-> **默认顺序：** 先读 `references/writing-specs.md` 获取格式规范，再读 `references/examples.md` 看示例。软件/AI/化学/生物类发明在动笔前必须先读 `references/special-domains.md`。
+> **默认顺序：** 先读 `references/writing-specs.md` 获取格式规范，再按需读其他文件。软件/AI/化学/生物类发明在动笔前必须先读 `references/special-domains.md`。**审查时必须对照 `references/writing-specs.md` 逐条检查。**
+
+---
+
+## 分部写作流程 - 逐步确认模式
+
+> **何时使用此模式：** 用户明确要求"分步写""一步一步来""按阶段写"，或希望逐步审阅确认后再进入下一步。
+
+分部写作将完整撰写流程拆分为 **5-6 个阶段**，每个阶段产出专利的一个关键部分，经用户确认后保存草稿，再进入下一阶段。
+
+### 分部写作总览
+
+```
+阶段1: 理解技术方案 → 提取三要素 → 展示确认 → 保存草稿
+阶段2: 构建权利要求 → 独权+从权 → 展示确认 → 保存草稿
+阶段3: 名称+背景技术+技术问题 → 展示确认 → 保存草稿
+阶段4: 发明内容（技术方案+有益效果）→ 展示确认 → 保存草稿
+阶段5: 附图说明+具体实施方式 → 展示确认 → 保存草稿
+阶段6: 撰写摘要 → 展示确认 → 进入审查流程
+```
+
+### 草稿保存与恢复
+
+每个阶段完成后，调用草稿管理脚本保存：
+
+```bash
+python scripts/draft_manager.py init <slug> <专利类型>   # 阶段1前初始化草稿
+python scripts/draft_manager.py save <slug> <阶段号> <阶段JSON> --notes "说明"
+```
+
+**草稿目录结构**（`drafts/{slug}/`）：
+- `draft.json` — 累积草稿（完整 JSON，未完成章节留空）
+- `stage.txt` — 当前阶段号（1-6，`done` 表示完成）
+- `notes.md` — 阶段摘要 + 用户反馈
+
+**恢复机制**：
+- skill 被触发后，先运行 `python scripts/draft_manager.py list` 检查是否有未完成草稿。
+- 若有草稿（stage 1-6），主动询问：「发现草稿 `{slug}`，当前在阶段{stage}，是否继续？」
+- 用户确认后，读取 `drafts/{slug}/draft.json` 恢复上下文，从对应阶段继续。
+- 用户拒绝则询问是否删除。
+
+### 阶段详细指南
+
+> 每个阶段的完整交互模板（输出格式、确认要点、用户反馈处理）见 **`references/staged-writing-guide.md`**。
+> 以下为快速参考表。
+
+| 阶段 | 产出 | 保存后立即验证 |
+|------|------|---------------|
+| **阶段1：理解方案** | 确认三要素 + 专利类型，用 `draft_manager.py init` 初始化草稿 | — |
+| **阶段2：权利要求** | 独权（含"其特征在于"）+ 从权（2-5项，层次化梯度） | `--stage-validate 2` |
+| **阶段3：名称+背景+问题** | 名称（≤25字）、技术领域、背景技术（200-400字）、技术问题 | `--stage-validate 3` |
+| **阶段4：方案+效果** | 技术方案（S1/S2/S3）+ 有益效果（推导式，量化优先） | `--stage-validate 4` |
+| **阶段5：附图+实施例** | 附图说明 + 具体实施方式（含完整公式、参数、效果验证） | `--stage-validate 5` |
+| **阶段6：摘要** | 摘要（≤300字），标记草稿完成 | `--stage-validate 6` |
+
+每阶段确认后执行：
+
+> **步骤：** ① 将本阶段产出的 JSON 片段写入 `stage<N>.json`（结构与草稿 JSON 一致，仅包含本阶段字段）；② 运行以下命令保存草稿并验证：
+
+```bash
+python scripts/draft_manager.py save <slug> <N> stage<N>.json --notes "确认"
+python scripts/orchestrate.py drafts/<slug>/draft.json --stage-validate <N>
+```
+
+> `stage<N>.json` 格式与完整草稿 JSON 相同（见 [完整输出流程](#完整输出流程) 的步骤 2），只需填写本阶段涉及的字段即可。各阶段产出字段参见上方表格。
+
+阶段6完成后，进入审查与生成（见 [完整输出流程](#完整输出流程)）。
 
 ## 单独撰写专利某一部分
 
@@ -248,9 +315,9 @@ JSON 结构中只包含用户要求的部分。例如单独撰写权利要求书
 }
 ```
 
-然后调用脚本：
+然后调用脚本（`--section` 参数仅生成指定章节，不产生空白页）：
 ```bash
-python scripts/generate_patent_docx.py claims_only.json output_claims.docx
+python scripts/generate_patent_docx.py claims_only.json output_claims.docx --section claims
 ```
 
 > **提示**：本部分为独立章节。后续撰写其他部分时，保持术语一致，确保权利要求与说明书相互支持。
@@ -259,9 +326,11 @@ python scripts/generate_patent_docx.py claims_only.json output_claims.docx
 
 ## 完整输出流程
 
+> 以下为所有撰写模式（完整撰写 / 分部写作 / 单独撰写）统一使用的最终执行流程：完成内容创作后，按 JSON 组织 → 自动验证 → 语义审查 → 生成 Word。
+
 ### 步骤1：撰写专利内容
 
-按上述撰写流程（理解技术方案 → 构建权利要求 → 确定名称 → 撰写说明书 → 撰写摘要）完成内容创作。
+按 [完整撰写流程](#完整撰写流程) （理解技术方案 → 构建权利要求 → 确定名称 → 撰写说明书 → 撰写摘要）完成内容创作。分部写作模式下各阶段产出逐阶段累积至相同结构。
 
 ### 步骤2：组织为 JSON 结构
 
@@ -301,28 +370,70 @@ python scripts/generate_patent_docx.py claims_only.json output_claims.docx
 - 技术方案中的 S 步骤用自然段分隔，实施例中的 S 步骤用空行分隔
 - **公式用 `$...$` 包裹 LaTeX 语法**，脚本自动转换为 Word 原生公式。支持：下标 `_`、上标 `^`、分数 `\frac{a}{b}`、根号 `\sqrt{a}`、希腊字母 `\delta` `\alpha` 等、运算符 `\cdot` `\times` `\pm` `\leq` `\geq` `\neq` `\infty` 等
 - 示例：`$L_{target}(\delta) = L_{max} \cdot (1-\delta/\delta_{max}) + L_{min} \cdot (\delta/\delta_{max})$`
+- **⚠️ 公式内不要换行**：`\n` 会被脚本解析为段落分隔，如果 `$...$` 公式块内含有 `\n`，会导致意外的段落拆分。复杂公式请保持在一行内。
+- **S 步骤段落分隔**：无论是技术方案还是实施例，每个 S 步骤之间**必须空一行**（\n\n），S 标题自动加粗。参见 writing-specs.md「铁律：每个 S 独占段落」。
 
-### 步骤3：自我审查与迭代优化
+### 步骤3：审查与生成
 
-将 JSON 保存到临时文件，运行自动验证：
+审查分为**自动验证**和**多子代理语义审查**两层，通过后由编排脚本生成 Word。
 
-```bash
-python scripts/validate_patent_json.py patent_content.json --output review_report.json
+**流程总览：**
+
+```
+步骤3a: 运行编排脚本（自动验证） → 有 errors → 修复后重试
+               ↓ 0 errors
+步骤3b: 手动派发 4 个子代理 → 收集输出至 reviews/ 目录
+               ↓
+步骤3c: 重新运行编排脚本（聚合语义审查 + 综合评分 + 生成 Word）
 ```
 
-根据审查报告逐项修复问题。修复后重新验证，最多迭代 **3 轮**。验证通过（0 errors）后进入下一步。
+> 自动验证未通过（有 errors）或综合评分 < 70 时，脚本不会生成 Word。修复后重跑即可，最多迭代 3 轮。
 
-> 完整审查流程、审查维度、修复优先级和退出条件见上方「自我审查与迭代优化」章节。
-
-### 步骤4：生成 Word 文档
-
-审查通过后，调用脚本生成 `.docx`：
+**步骤3a — 自动验证：**
 
 ```bash
-python scripts/generate_patent_docx.py patent_content.json output.docx
+python scripts/orchestrate.py patent_content.json --dry-run
 ```
 
-脚本会自动设置：A4纸张、专利标准页边距、宋体小四号、固定行距18pt、页脚居中页码、首行缩进两字符。
+编排脚本首先执行自动验证。0 errors 则进入步骤 3b；有 errors 则报告并退出（exit 1），修复后重试。
+
+> 也可单独运行验证脚本调试：`python scripts/validate_patent_json.py patent_content.json`
+
+**步骤3b — 多子代理语义审查（手动）：**
+
+自动验证通过（0 errors）后，**手动派发 4 个语义审查子代理**。编排脚本 `orchestrate.py` 仅负责**聚合** reviews/ 中已有的子代理输出，不会自动派发子代理。
+
+1. 依次读取 `references/agent-prompts/` 下的 4 个 prompt 文件。
+2. 向每个子代理传入专利 JSON 的相关章节，要求其按 prompt 中的结构化 schema 输出审查报告。
+3. 将每个子代理的输出保存到 `reviews/` 目录（文件名对应 agent 名称，如 `logic-chain-reviewer.json`）。
+
+| 子代理 | 职责 | 输入重点 | prompt 文件 |
+|--------|------|----------|-------------|
+| **LogicChainReviewer** | 逻辑链审查 | background、problem、claims、effects | `references/agent-prompts/logic-chain-reviewer.md` |
+| **EnablementReviewer** | 充分公开审查 | solution、embodiment、claims | `references/agent-prompts/enablement-reviewer.md` |
+| **ScopeReviewer** | 保护范围审查 | claims、problem、embodiment | `references/agent-prompts/scope-reviewer.md` |
+| **WritingQualityReviewer** | 写作质量审查 | specification 全文、abstract | `references/agent-prompts/writing-quality-reviewer.md` |
+
+> **如果跳过语义审查**（`--skip-semantic` 或 reviews/ 目录无子代理输出），编排脚本的综合评分将封顶 69 分，**强制不通过**，因为最关键的逻辑链、充分公开、保护范围审查均未执行。仅在对内容质量有充分把握时使用 `--skip-semantic`。
+
+**步骤3c — 综合评分与生成：**
+
+重新运行编排脚本，聚合 reviews/ 中的子代理输出并完成最终评分：
+
+```bash
+python scripts/orchestrate.py patent_content.json --output output.docx
+```
+
+评分规则：
+- 综合分 ≥ 85 → 🟢 优秀，生成 Word
+- 70 ≤ 综合分 < 85 → 🟡 良好，生成 Word（建议根据 warning 优化）
+- 综合分 < 70 → 🔴 拒绝生成，修复后重试
+- **语义审查被跳过 → 综合分封顶 69，拒绝生成**
+
+选项：
+- `--skip-semantic` — 跳过语义审查（评分封顶 69，不建议使用）
+- `--dry-run` — 仅审查不生成 Word
+- `--strict` — warnings 升级为 errors
 
 ---
 
@@ -346,46 +457,23 @@ python scripts/generate_patent_docx.py patent_content.json output.docx
 ## 自我审查与迭代优化
 
 > **此步骤是生成 .docx 之前的必经环节，不得跳过。**
+>
+> 本 skill 采用 **"自动验证 + 多子代理语义审查 + 综合评分"** 的三层审查机制。完整执行流程见 [完整输出流程](#完整输出流程)，以下为补充参考信息。
 
-撰写完成后，必须对专利内容进行全面自我审查。发现问题后迭代修复，直至通过审查或达到最大轮次。
+### 分部写作阶段内验证
 
-### 审查流程
-
-```
-撰写内容 → 组织 JSON → 自动验证 → 人工审查 → 修复问题 → 重新验证 → 生成 .docx
-                                  ↑__________________________________|
-                                          迭代循环（最多3轮）
-```
-
-### 执行步骤
-
-#### 第1步：保存 JSON 并运行自动验证
-
-将撰写好的专利内容保存为临时 JSON 文件，运行验证脚本：
+每个阶段产出后立即用 `--stage-validate` 检查对应章节：
 
 ```bash
-python scripts/validate_patent_json.py patent_content.json --output review_report.json
+python scripts/orchestrate.py drafts/<slug>/draft.json --stage-validate 2  # 权利要求
+python scripts/orchestrate.py drafts/<slug>/draft.json --stage-validate 3  # 背景技术
+python scripts/orchestrate.py drafts/<slug>/draft.json --stage-validate 5  # 实施例
 ```
 
-验证脚本自动检查 6 大类共 40+ 条规则，输出结构化审查报告。
+> **注意**：阶段验证使用占位符填充未完成字段以减少误报，因此阶段验证通过**不代表最终全量验证一定通过**。最终生成前仍需运行完整的自动验证（`--dry-run`）。
 
-#### 第2步：逐项分析审查报告
+### 修复优先级
 
-阅读审查报告，将问题分类处理：
-
-| 问题类型 | 处理方式 |
-|---------|---------|
-| **error** | 必须修复。包括：模糊用语、序号词、商业用语、术语不一致、格式缺陷、章节缺失 |
-| **warning** | 建议修复。包括：背景技术过长/过短、缺少推导逻辑、效果未量化、实施例缺少验证 |
-
-对每个 error/warning：
-1. 定位到具体章节和行
-2. 根据 `suggestion` 字段提供的修复建议进行修改
-3. 如 suggestion 不够具体，参考下方审查维度中的详细规范
-
-#### 第3步：修复问题
-
-按优先级修复：
 1. **致命缺陷**（章节缺失、权利要求为空）→ 补全内容
 2. **术语规范**（本发明/本实用新型混用、模糊词、序号词）→ 逐一替换
 3. **格式规范**（缺少"其特征在于"、项目符号列表）→ 调整格式
@@ -393,19 +481,9 @@ python scripts/validate_patent_json.py patent_content.json --output review_repor
 
 > **修复原则**：每个问题都要实际修改 JSON 中的文本内容，不要只标注而不修改。
 
-#### 第4步：重新验证
+### 人工审查（Fallback）
 
-修复完成后再次运行验证脚本：
-
-```bash
-python scripts/validate_patent_json.py patent_content.json --output review_report.json
-```
-
-如果仍有 error，重复第2-3步，最多迭代 **3 轮**。
-
-#### 第5步：通过后进入人工审查
-
-自动验证通过（0 errors）后，还需进行一轮 **人工审查**（即你作为撰写代理的语义层面审查）。自动验证只能检查硬性规则，以下维度需要人工判断：
+如果子代理因 token 限制、调用失败或其他原因无法执行，退回到以下人工审查清单，由主代理自行完成语义层面审查：
 
 **逻辑链审查（最重要）：**
 - [ ] 背景技术的每个缺陷 → 对应一个技术问题
@@ -436,25 +514,40 @@ python scripts/validate_patent_json.py patent_content.json --output review_repor
 
 | 条件 | 处理 |
 |------|------|
-| 0 errors + 0 warnings | ✅ 质量优秀，进入人工审查 |
-| 0 errors + N warnings | ✅ 通过，人工审查时关注 warning 项 |
-| 少量 errors（1-5），第3轮后 | ⚠️ 记录剩余问题，在交付时告知用户 |
-| 大量 errors（>5），第3轮后 | ⚠️ 可能存在系统性问题，检查是否对用户技术方案理解有误 |
+| 0 errors + overall_score ≥ 85 | ✅ 质量优秀，生成 Word |
+| 0 errors + 70 ≤ overall_score < 85 | ✅ 通过，但需在交付时告知用户剩余 warning |
+| 有 errors 或 overall_score < 70，未到第3轮 | ⚠️ 继续迭代修复 |
+| 有 errors 或 overall_score < 70，已到第3轮 | ⚠️ 记录剩余问题，在交付时告知用户 |
+| 语义审查被跳过（overall_score 被强制封顶 69） | ⚠️ 语义审查是质量保障的关键环节，强烈建议完成 |
+
+> `overall_score` 是 4 个子代理评分的等权平均与自动验证分的加权综合（由 `orchestrate.py` 计算并打印到终端，也可通过 `multi_agent_review.py --output final_report.json` 导出详细报告）。
 
 ### 审查维度速查表
 
-自动验证覆盖的 6 大维度：
+#### 自动验证覆盖的 7 大维度
 
-| 维度 | 检查项数 | 典型问题 |
-|------|---------|---------|
-| 格式完整性 | 8 | 章节缺失、权利要求为空、摘要超长 |
-| 术语规范 | 5 | "约"/"左右"/"本发明"vs"本实用新型" |
-| 禁用模式 | 6 | 序号词、商业用语、套路化问题表述、"由于"开头 |
-| 逻辑一致性 | 4 | 问题↔缺陷↔效果对应、S步骤一致性 |
-| 结构规范 | 7 | 权利要求格式、背景技术长度、项目符号 |
-| 实施例质量 | 5 | 分步格式、效果验证、数学语言、参数定义 |
+| 维度 | 检查项数 | 典型问题 | 对应 writing-specs.md |
+|------|---------|---------|----------------------|
+| 格式完整性 | 8 | 章节缺失、权利要求为空、摘要超长 | — |
+| 术语规范 | 5 | "约"/"左右"/"本发明"vs"本实用新型" | 权利要求书「模糊用语黑名单」 |
+| 禁用模式 | 6 | 序号词、商业用语、套路化问题表述、"由于"开头 | 「用语与格式」「背景技术简练规则」 |
+| 逻辑一致性 | 4 | 问题↔缺陷↔效果对应、S步骤一致性 | 「背景技术简练规则」 |
+| 结构规范 | 7 | 权利要求格式、背景技术长度、项目符号 | 「权利要求书详细撰写规范」「背景技术简练规则」 |
+| 实施例质量 | 5 | 分步格式、效果验证、数学语言 | 「实施例的数学语言要求」「效果验证的撰写要点」 |
+| **writing-specs 专项** | **5** | **数学自然语言、参数泄漏、数值范围格式、砖墙段落、S步骤分隔** | **全文各章节** |
 
-> 完整规则详见：`references/checklist.md`、`references/writing-specs.md`、`references/effects-patterns.md`
+#### 多子代理语义审查覆盖的 4 大维度
+
+| 子代理 | 审查重点 | 典型问题 | 对应 writing-specs.md 章节 |
+|--------|----------|----------|--------------------------|
+| LogicChainReviewer | 逻辑链闭环 | 缺陷→问题→特征→效果断链或错位 | 「背景技术简练规则」「必要技术特征」 |
+| EnablementReviewer | 充分公开 | 参数缺失、公式模糊、实施例无法复现 | 「实施例的数学语言要求」「效果验证的撰写要点」「充分公开标准」 |
+| ScopeReviewer | 保护范围 | 非必要特征、从权层次不足、主题覆盖不全 | 「权利要求书详细撰写规范」「必要技术特征」「从属权利要求」 |
+| WritingQualityReviewer | 写作质量 | 断言式效果、套路化表述、背景冗长、砖墙段落 | 「用语与格式」「背景技术简练规则」「数值范围撰写规范」「发明内容格式规则」 |
+
+> **审查时必须同时对照 `references/writing-specs.md` 进行。** 自动验证脚本已覆盖该文件中的可自动化规则（数学自然语言检测、参数泄漏、S步骤分隔、数值范围格式等），子代理提示词中也已内嵌 writing-specs.md 的具体章节引用。
+
+> 完整规则详见：`references/checklist.md`、`references/writing-specs.md`、`references/effects-patterns.md`、`references/agent-prompts/`
 
 ---
 

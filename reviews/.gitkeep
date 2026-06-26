@@ -1,0 +1,7 @@
+# 子代理输出目录
+# 放置 4 个语义审查子代理的 JSON 输出文件：
+#   logic-chain-reviewer.json
+#   enablement-reviewer.json
+#   scope-reviewer.json
+#   writing-quality-reviewer.json
+# orchestrate.py 读取此目录进行综合评分
