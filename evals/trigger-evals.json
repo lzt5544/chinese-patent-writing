@@ -1,0 +1,150 @@
+{
+  "skill_name": "chinese-patent-writing",
+  "eval_type": "trigger",
+  "cases": [
+    {
+      "id": 1,
+      "prompt": "帮我写一份中国发明专利申请文件",
+      "should_trigger": true,
+      "reason": "明确要求中国发明专利申请文件"
+    },
+    {
+      "id": 2,
+      "prompt": "根据这份技术交底书生成专利说明书和权利要求书",
+      "should_trigger": true,
+      "reason": "技术交底书转专利文件"
+    },
+    {
+      "id": 3,
+      "prompt": "帮我写权利要求书",
+      "should_trigger": true,
+      "reason": "单章专利章节撰写"
+    },
+    {
+      "id": 4,
+      "prompt": "写一下这个方案的背景技术和发明内容",
+      "should_trigger": true,
+      "reason": "专利申请上下文中的典型章节撰写"
+    },
+    {
+      "id": 5,
+      "prompt": "这个结构能不能申请实用新型？顺便帮我起草",
+      "should_trigger": true,
+      "reason": "实用新型判断和起草"
+    },
+    {
+      "id": 6,
+      "prompt": "帮我做一张专利结构示意图",
+      "should_trigger": true,
+      "reason": "专利附图草案制作"
+    },
+    {
+      "id": 7,
+      "prompt": "给这个实用新型做摘要附图",
+      "should_trigger": true,
+      "reason": "摘要附图属于专利附图任务"
+    },
+    {
+      "id": 8,
+      "prompt": "AI算法这个技术方案怎么写成发明专利",
+      "should_trigger": true,
+      "reason": "软件/AI发明专利撰写"
+    },
+    {
+      "id": 9,
+      "prompt": "帮我检查这份权利要求有没有问题",
+      "should_trigger": true,
+      "reason": "权利要求审查优化"
+    },
+    {
+      "id": 10,
+      "prompt": "我想保护这个技术方案，按中国专利格式写一下",
+      "should_trigger": true,
+      "reason": "虽未直接说专利申请，但明确中国专利格式"
+    },
+    {
+      "id": 11,
+      "prompt": "给这个产品画一张电商详情页配图",
+      "should_trigger": false,
+      "reason": "普通营销配图，不是专利附图"
+    },
+    {
+      "id": 12,
+      "prompt": "帮我设计一个产品Logo",
+      "should_trigger": false,
+      "reason": "品牌设计任务"
+    },
+    {
+      "id": 13,
+      "prompt": "画一个用户注册流程图",
+      "should_trigger": false,
+      "reason": "普通流程图，与专利无关"
+    },
+    {
+      "id": 14,
+      "prompt": "帮我查一下这个领域有哪些专利，不用撰写",
+      "should_trigger": false,
+      "reason": "纯检索分析且明确不撰写"
+    },
+    {
+      "id": 15,
+      "prompt": "帮我写美国临时专利申请",
+      "should_trigger": false,
+      "reason": "外国专利，不适用中国专利撰写 skill"
+    },
+    {
+      "id": 16,
+      "prompt": "帮我做外观设计专利的六视图",
+      "should_trigger": false,
+      "reason": "外观设计专利不属于本 skill 范围"
+    },
+    {
+      "id": 17,
+      "prompt": "这个想法有没有商业价值？",
+      "should_trigger": false,
+      "reason": "商业分析，不是专利文件撰写"
+    },
+    {
+      "id": 18,
+      "prompt": "帮我实现这个算法的Python代码",
+      "should_trigger": false,
+      "reason": "代码实现任务，与专利撰写无关"
+    },
+    {
+      "id": 19,
+      "prompt": "普通说明书怎么写？",
+      "should_trigger": false,
+      "reason": "未指向专利说明书"
+    },
+    {
+      "id": 20,
+      "prompt": "帮我优化这份专利摘要",
+      "should_trigger": true,
+      "reason": "专利摘要修改"
+    },
+    {
+      "id": 21,
+      "prompt": "帮我给这份专利配一个系统框图",
+      "should_trigger": true,
+      "reason": "专利系统框图属于附图草案"
+    },
+    {
+      "id": 22,
+      "prompt": "帮我画一个APP架构图，放到技术方案介绍里",
+      "should_trigger": false,
+      "reason": "普通架构图，未连接专利申请"
+    },
+    {
+      "id": 23,
+      "prompt": "这个硬件结构需要同时申请发明和实用新型吗？",
+      "should_trigger": true,
+      "reason": "同日申请策略属于中国专利申请任务"
+    },
+    {
+      "id": 24,
+      "prompt": "帮我写具体实施方式，已有权利要求如下",
+      "should_trigger": true,
+      "reason": "专利具体实施方式单章撰写"
+    }
+  ]
+}

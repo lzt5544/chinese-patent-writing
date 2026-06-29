@@ -1,6 +1,6 @@
 ---
 name: chinese-patent-writing
-description: Use when the user asks to write, draft, or create a Chinese patent (发明专利 or 实用新型专利), or mentions 专利撰写, 专利申请, 专利说明书, 权利要求书, 技术交底书, or patent application. Also triggers for requests to write or modify any single section of a patent. Requires python-docx.
+description: Use when the user asks to write, draft, revise, review, structure, or create draft drawings for a Chinese patent application document (发明专利 or 实用新型专利), or mentions 专利撰写, 专利申请, 专利说明书, 权利要求书, 技术交底书, 专利附图, 专利配图, 专利结构示意图, 专利流程图, 专利系统框图, 摘要附图, or patent application. Also triggers for requests to write or modify any single section of a Chinese patent. Do not use for ordinary invention brainstorming, product design, foreign patents, design patents, ordinary diagrams/drawings, marketing images, or prior-art search-only tasks unless the user connects the work to a Chinese patent filing. Requires python-docx.
 ---
 
 # 中文专利撰写 (Chinese Patent Writing)
@@ -55,8 +55,13 @@ python scripts/draft_manager.py list
 
 ## 范围说明
 
-- **适用：** 中国发明专利、实用新型专利的完整撰写、交底书转化、单章撰写、审查优化
-- **不适用：** 外国专利、外观设计专利、纯检索分析（不撰写）
+- **适用：** 中国发明专利、实用新型专利的完整撰写、交底书转化、单章撰写、审查优化、专利附图草案/摘要附图草案制作
+- **完整撰写：** 最终交付 `.docx` Word 文件，并按本 skill 的 JSON、验证、语义审查、编排脚本流程执行。
+- **单章撰写：** 只生成用户指定章节的 `.docx`，使用 `scripts/generate_patent_docx.py --section`。
+- **审查/优化：** 对已有申请文件或章节先指出可执行问题，再按用户意图修改；涉及新增技术内容时遵守专利法第33条。
+- **纯检索分析：** 如果用户只要求现有技术检索或可专利性分析，不进入完整撰写流程；只提供检索策略、检索式、结果整理框架和“不能虚构文献”的提示。
+- **专利附图：** 仅在中国专利申请语境下进入附图草案模式；如果模型具备生图工具，必须调用生图工具生成可供参考的专利附图草案，同时输出附图方案、附图标记表和合规提醒。
+- **不适用：** 外国专利、外观设计专利、普通产品设计、普通技术实现、营销配图、电商详情图、与专利申请无关的流程图/结构图。
 
 ---
 
@@ -73,7 +78,7 @@ python scripts/draft_manager.py list
 
 ### 同日申请
 
-根据专利法第9条，同一发明创造可**同日**申请发明和实用新型。产品结构改进同时涉及方法 → 强烈建议同日申请。同日申请的两份独立权利要求保护范围应完全相同。
+根据专利法第9条，同一申请人可以就同样的发明创造在同日分别申请发明专利和实用新型专利；申请时应当分别说明已申请另一专利。实用新型已经授权且发明专利申请经审查没有发现驳回理由时，通常需要声明放弃已授权的实用新型专利权。将同日申请作为策略选项提示，不要自动断言“必须同日申请”或“两份独立权利要求保护范围应完全相同”；应结合保护客体、权利要求布局、授权速度、成本和后续放弃安排，由专利代理人进一步判断。
 
 ### 术语规范
 
@@ -107,6 +112,8 @@ python scripts/draft_manager.py list
 - **要解决的技术问题**：现有技术存在什么缺陷？（背景技术中的缺陷 = 技术问题）
 - **技术方案**：具体如何解决？关键结构/步骤是什么？**注意：发明人提供的交底书通常是具体的实施例，需要从中提炼并概括上位为权利要求的保护范围**
 - **有益效果**：相比现有技术有什么优势？（量化优先，且必须与背景技术的缺陷一一对应）
+
+如果信息不足，先识别缺口：技术问题、区别特征、关键参数、附图/结构关系、保护重点、现有技术依据。缺口会影响权利要求边界或充分公开时，优先向用户追问；用户要求先出草稿时，可以列明“暂定假设”和“待确认事项”，但不得把假设写成已证实事实。
 
 交底书信息提取模板：
 ```
@@ -173,6 +180,8 @@ python scripts/draft_manager.py list
 2. **背景技术**（1-3段，200-400字）：简述最接近现有技术→客观指出缺陷。**不写行业/市场/发展史**
 
    **撰写深度策略：** 复杂/高创新发明→详细写明缺陷；简单/低创新发明→上位概括避免技术启示。**背景技术中的缺陷 = 本申请要解决的技术问题**。写法对比示例见 `references/writing-specs.md`「背景技术写法对比」及 `references/examples.md`。
+
+   **防虚构规则：** 不得编造专利号、公开号、论文题名、申请人、发布日期或具体检索结论。未执行可核验检索时，用“现有技术中通常采用……”等概括写法，并提示具体对比文件需后续检索确认。
 3. **发明内容**：
    - **技术问题（1-2段）**：**不写"本发明所要解决的技术问题是提供一种…"**，这不是技术问题而是技术方案的开头。正确写法是从背景技术的缺陷自然引出，聚焦核心技术矛盾。
      - **原则：背景技术里写了什么缺陷，技术问题就直接点明要解决什么，一一对应，绝不绕弯子。**（正反示例见 `references/examples.md`）
@@ -211,8 +220,19 @@ python scripts/draft_manager.py list
 | 自动验证通过后的语义审查 | 本文件「自我审查与迭代优化」+ 4 个子代理 prompt（已内嵌 writing-specs.md 引用） |
 | 需要参照完整示例理解输出格式 | `references/examples.md` |
 | 不确定有益效果怎么写、需要写法模板 | `references/effects-patterns.md`（包含数据驱动型/深层递进型/攻克瓶颈型/多从权逐层展开型/意料不到型五种写法） |
+| 用户要求专利附图、摘要附图、结构示意图、流程图、系统框图或专利配图 | `references/drawing-guide.md` |
 
 > **默认顺序：** 先读 `references/writing-specs.md` 获取格式规范，再按需读其他文件。软件/AI/化学/生物类发明在动笔前必须先读 `references/special-domains.md`。**审查时必须对照 `references/writing-specs.md` 逐条检查。**
+
+### 附图草案与生图工具调用
+
+当用户在中国专利申请语境下要求“专利附图、专利配图、结构示意图、流程图、系统框图、摘要附图”等，先读取 `references/drawing-guide.md`，再判断附图类型和输出方式：
+
+- **机械/产品结构：** 输出结构示意图、局部放大图、剖视图、爆炸图等草案，并建立附图标记表。
+- **方法/算法/软件：** 输出流程图、系统框图、模块关系图、数据流图等草案。
+- **摘要附图：** 选择最能体现技术特征的一幅图，优先体现独立权利要求的核心区别特征。
+
+如果当前模型具备生图工具，必须调用生图工具生成黑白线稿风格的专利附图草案，并同时输出附图方案、附图标记表、附图说明和合规提醒。生成图片仅作为草案参考，图中数字标号可能不稳定；正式编号以文字版附图标记表为准。若没有生图工具，不要声称已经生成图片，应输出可直接交给绘图人员或生图模型使用的提示词和制图说明。
 
 ---
 
